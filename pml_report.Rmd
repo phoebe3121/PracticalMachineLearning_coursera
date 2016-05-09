@@ -1,0 +1,82 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Yuan Liu"
+date: "March 18, 2016"
+output: html_document
+---
+#### Load the Data
+We load the data as if the type of all the columns are character. 
+```{r, cache=T}
+source(normalizePath("gen.funs.R"), chdir=T)
+libs=c("data.table", "caret")
+check_install_load_libs(libs)
+training = read.csv("pml-training.csv", colClasses="character")
+testing = read.csv("pml-testing.csv", colClasses="character")
+
+```
+#### Missing Value
+In both the training and the testing data, we see columns that contain missing value. 
+In the training data, these columns are missing in 98% of the rows.
+```{r}
+temp = sapply(training,function(x){sum(is.na(x)|x=="")})/nrow(training)
+summary(temp[temp>0])
+training.missing.cols = names(temp)[temp>0]
+cols.selected = names(temp)[temp==0]
+```
+In the testing data, these columns are missing in all of the 20 rows.
+```{r}
+temp = sapply(testing, function(x){sum(is.na(x)|x=="")})/nrow(testing)
+summary(temp[temp>0])
+testing.missing.cols = names(temp)[temp>0]
+```
+It is the same set of columns which contain a large amount of missing value in both the training and the testing data set. Therefore, these columns do not have predictive power and should not be used in our model.
+```{r}
+identical(training.missing.cols, testing.missing.cols)
+```
+
+#### Features
+We use all the numerical measures (with no missing value) by the sensors as the features, and ignore the user ID and the timestamps. 
+```{r}
+features = cols.selected[8:(length(cols.selected)-1)]
+training[features] = lapply(training[features], as.numeric)
+testing[features] = lapply(testing[features],as.numeric)
+
+```
+
+The "testing" data contains 20 non-labeled observations, and can not be used for model evaluation and selection. We need to a labeled testing data for model evaluation. 
+
+```{r}
+library(caret)
+inTrain <- createDataPartition(training$classe, p=0.75, list=F)
+training[["classe"]] <- as.factor(training[["classe"]])
+Training <- training[inTrain,c("classe", features)]
+Testing <- training[-inTrain,c("classe", features)]
+```
+
+We trained four models: GBM with PCA, GBM, SVM and Random Forest.
+All four models are trained with cross validation. GBM without PCA performs better than GBM with PCA, therefore, we did not do PCA in SVM and RF. Overall, random forest performs the best.
+As RF is the best model, we use RF to make prediction of the 20 observations in the original testing set. It achieved 100% accuracy.
+```{r, cache=T}
+### GBM with PCA
+my.gbm.cv.pca = train(classe~., data=Training, method="gbm", trControl = trainControl(method="cv"),preProcess = "pca", verbose=F)
+my.gbm.cv.pca.predict = predict(my.gbm.cv.pca, Testing)
+
+### GBM
+my.gbm.cv = train(classe~., data=Training, method="gbm", trControl = trainControl(method="cv"), verbose=F)
+my.gbm.cv.predict = predict(my.gbm.cv, Testing)
+
+### SVM
+my.svm.cv = train(classe~., data=Training, method="svmLinear", trControl = trainControl(method="cv"), verbose=F)
+my.svm.cv.predict = predict(my.svm.cv, Testing)
+
+### Random Forest
+my.rf.cv = train(classe~., data=Training, method="rf", trControl = trainControl(method="cv"), verbose=F)
+my.rf.cv.predict = predict(my.rf.cv, Testing)
+
+confusionMatrix(my.gbm.cv.pca.predict, Testing$classe)
+confusionMatrix(my.gbm.cv.predict, Testing$classe)
+confusionMatrix(my.svm.cv.predict, Testing$classe)
+confusionMatrix(my.rf.cv.predict, Testing$classe)
+
+final.pred = predict(my.rf.cv, testing)
+```
